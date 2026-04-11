@@ -4,7 +4,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Hand Tracking Air Canvas</title>
+    <title>Sarojeet's Air Canvas</title>
     <!-- Use Google Fonts for UI and Handwriting -->
     <link href="https://fonts.googleapis.com/css2?family=Caveat:wght@600&family=Outfit:wght@300;500;700&display=swap"
         rel="stylesheet">
@@ -184,7 +184,7 @@
     </div>
 
     <div class="ui-overlay">
-        <h1>Air Canvas</h1>
+        <h1>Sarojeet's Air Canvas</h1>
         <p>🤙 <strong>Call Me:</strong> Erase (move across)</p>
         <p>☝️ <strong>Point Index:</strong> Draw / Write</p>
         <p>✌️ <strong>Peace Sign:</strong> Change Color</p>
@@ -403,6 +403,7 @@
         let sPxs = [null, null], sPys = [null, null];
         let sPinchXs = [null, null], sPinchYs = [null, null];
         let sPalmXs = [null, null], sPalmYs = [null, null];
+        let gestureHistory = [[], []];
 
         // Helper to check if a finger is extended
         function isFingerExtended(landmarks, tipIndex, dipIndex) {
@@ -568,6 +569,22 @@
                         gesture = 'FIST'; // All closed
                     }
 
+                    // Smooth gestures (Debounce) to prevent flickering
+                    gestureHistory[index].push(gesture);
+                    if (gestureHistory[index].length > 5) gestureHistory[index].shift();
+                    
+                    const gestureCounts = {};
+                    let maxGesture = gesture;
+                    let maxCount = 0;
+                    for (const g of gestureHistory[index]) {
+                        gestureCounts[g] = (gestureCounts[g] || 0) + 1;
+                        if (gestureCounts[g] > maxCount) {
+                            maxCount = gestureCounts[g];
+                            maxGesture = g;
+                        }
+                    }
+                    gesture = maxGesture; // Use the most frequent gesture in our recent history
+
                     // Raw coordinates
                     const pxRaw = indexTip.x * canvasElement.width;
                     const pyRaw = indexTip.y * canvasElement.height;
@@ -580,7 +597,7 @@
                     const palmYRaw = palmCenter.y * canvasElement.height;
 
                     // Smooth coordinates
-                    const alpha = 0.4;
+                    const alpha = 0.25; // Lower alpha means smoother drawing but slightly more lag
                     if (sPxs[index] === null) { sPxs[index] = pxRaw; sPys[index] = pyRaw; } else { sPxs[index] += (pxRaw - sPxs[index]) * alpha; sPys[index] += (pyRaw - sPys[index]) * alpha; }
                     if (sPinchXs[index] === null) { sPinchXs[index] = pinchMidXRaw; sPinchYs[index] = pinchMidYRaw; } else { sPinchXs[index] += (pinchMidXRaw - sPinchXs[index]) * alpha; sPinchYs[index] += (pinchMidYRaw - sPinchYs[index]) * alpha; }
                     if (sPalmXs[index] === null) { sPalmXs[index] = palmXRaw; sPalmYs[index] = palmYRaw; } else { sPalmXs[index] += (palmXRaw - sPalmXs[index]) * alpha; sPalmYs[index] += (palmYRaw - sPalmYs[index]) * alpha; }
@@ -827,6 +844,7 @@
                 sPxs = [null, null]; sPys = [null, null];
                 sPinchXs = [null, null]; sPinchYs = [null, null];
                 sPalmXs = [null, null]; sPalmYs = [null, null];
+                gestureHistory = [[], []];
 
                 if (currentEraseSession.length > 0) {
                     undoStack.push(currentEraseSession);
