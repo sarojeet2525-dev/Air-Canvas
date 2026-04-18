@@ -181,6 +181,7 @@
         <button onclick="spawnShape('star')">⭐️ Star</button>
         <button onclick="spawnShape('planet')">🪐 Planet</button>
         <button onclick="spawnShape('galaxy')">🌌 Galaxy</button>
+        <button onclick="spawnShape('net')">🕸️ Elastic Net</button>
     </div>
 
     <div class="ui-overlay">
@@ -199,6 +200,8 @@
             <label for="brushSizeSlider" style="display: block; font-size: 14px; font-weight: 300; margin-bottom: 5px;">Brush Size: <span id="brushSizeLabel">6</span></label>
             <input type="range" id="brushSizeSlider" min="1" max="40" value="6" style="width: 100%; cursor: pointer;">
         </div>
+        <button id="toggleBrushStyleBtn" onclick="toggleBrushStyle()" style="margin-top: 15px; width: 100%; background: transparent; color: white; border: 1px solid #ff007f; padding: 10px; border-radius: 8px; cursor: pointer; font-family: 'Outfit'; transition: all 0.2s;">Brush: SOLID</button>
+        <button id="toggleZDepthBtn" onclick="toggleZDepthMode()" style="margin-top: 15px; width: 100%; background: transparent; color: white; border: 1px solid #ffd700; padding: 10px; border-radius: 8px; cursor: pointer; font-family: 'Outfit'; transition: all 0.2s;">3D Depth Tracking: OFF</button>
     </div>
 
     <script>
@@ -212,6 +215,22 @@
             currentBrushSize = parseInt(e.target.value);
             document.getElementById('brushSizeLabel').innerText = currentBrushSize;
         });
+
+        let brushStyle = 'solid';
+        function toggleBrushStyle() {
+            brushStyle = brushStyle === 'solid' ? 'particle' : 'solid';
+            const btn = document.getElementById('toggleBrushStyleBtn');
+            btn.innerText = `Brush: ${brushStyle.toUpperCase()}`;
+            btn.style.background = brushStyle === 'particle' ? 'rgba(255, 0, 127, 0.2)' : 'transparent';
+        }
+
+        let zDepthMode = false;
+        function toggleZDepthMode() {
+            zDepthMode = !zDepthMode;
+            const btn = document.getElementById('toggleZDepthBtn');
+            btn.innerText = `3D Depth Tracking: ${zDepthMode ? 'ON' : 'OFF'}`;
+            btn.style.background = zDepthMode ? 'rgba(255, 215, 0, 0.2)' : 'transparent';
+        }
 
         // Setup resize
         function resizeCanvas() {
@@ -253,10 +272,10 @@
             return { x: cx * scale + canvasElement.width / 2, y: cy * scale + canvasElement.height / 2, z: cz, scale: scale };
         }
 
-        function unproject3D(sx, sy) {
+        function unproject3D(sx, sy, sz = 0) {
             let cx = sx - canvasElement.width / 2;
             let cy = sy - canvasElement.height / 2;
-            let cz = 0; // Unproject onto the viewing depth z=0
+            let cz = sz; // Unproject onto explicit depth
 
             let cosX = Math.cos(-sceneAngleX), sinX = Math.sin(-sceneAngleX);
             let ny = cy * cosX - cz * sinX, nz2 = cy * sinX + cz * cosX;
@@ -283,6 +302,9 @@
         let shatterState = 'INTACT'; // 'INTACT' | 'SHATTERED' | 'ASSEMBLING'
         let particles = [];
         let gestureCooldown = 0;
+        
+        // Elastic Net Physics Data
+        const elasticNets = []; 
 
         // 3D Shape Spawner
         function spawnShape(type) {
@@ -394,6 +416,38 @@
                     }
                     paths.push({ groupId: groupId, color: Math.random() > 0.5 ? '#00f0ff' : '#ff007f', points: pts });
                 }
+            } else if (type === 'net') {
+                const cols = 8;
+                const rows = 8;
+                const spacing = 30; // Distance between nodes
+                const netNodes = [];
+                const netSprings = [];
+                const startX = hw + cx - ((cols-1) * spacing) / 2;
+                const startY = hh + cy - ((rows-1) * spacing) / 2;
+
+                for (let r = 0; r < rows; r++) {
+                    for (let c = 0; c < cols; c++) {
+                        netNodes.push({
+                            x: startX + c * spacing,
+                            y: startY + r * spacing,
+                            z: cz,
+                            vx: 0, vy: 0, vz: 0,
+                            // Lock tops
+                            locked: r === 0 
+                        });
+                    }
+                }
+
+                const getIdx = (r, c) => r * cols + c;
+                for (let r = 0; r < rows; r++) {
+                    for (let c = 0; c < cols; c++) {
+                        const i = getIdx(r, c);
+                        if (c < cols - 1) netSprings.push({ n1: i, n2: getIdx(r, c + 1), rest: spacing }); // Horizontal
+                        if (r < rows - 1) netSprings.push({ n1: i, n2: getIdx(r + 1, c), rest: spacing }); // Vertical
+                    }
+                }
+
+                elasticNets.push({ color: color, nodes: netNodes, springs: netSprings });
             }
         }
 
@@ -423,7 +477,7 @@
         let lastDualPinchMidY = null;
 
         // Smoothing states
-        let sPxs = [null, null], sPys = [null, null];
+        let sPxs = [null, null], sPys = [null, null], sPzs = [null, null];
         let sPinchXs = [null, null], sPinchYs = [null, null];
         let sPalmXs = [null, null], sPalmYs = [null, null];
         let gestureHistory = [[], []];
@@ -464,40 +518,113 @@
             for (const path of paths) {
                 if (path.points.length < 2) continue;
                 if (path.shattered && shatterState !== 'INTACT') continue; // Hide shattered paths
-                canvasCtx.beginPath();
-                const p0 = project3D(path.points[0].x, path.points[0].y, path.points[0].z || 0);
-                canvasCtx.moveTo(p0.x, p0.y);
-                for (let i = 1; i < path.points.length; i++) {
-                    const pi = project3D(path.points[i].x, path.points[i].y, path.points[i].z || 0);
-                    canvasCtx.lineTo(pi.x, pi.y);
+                
+                if (path.style !== 'particle') {
+                    canvasCtx.beginPath();
+                    const p0 = project3D(path.points[0].x, path.points[0].y, path.points[0].z || 0);
+                    canvasCtx.moveTo(p0.x, p0.y);
+                    for (let i = 1; i < path.points.length; i++) {
+                        const pi = project3D(path.points[i].x, path.points[i].y, path.points[i].z || 0);
+                        canvasCtx.lineTo(pi.x, pi.y);
+                    }
+
+                    const pathScale = p0.scale; // use start point scale for thickness
+
+                    // Highlight if grabbed by either hand
+                    const isPathDragged = (draggedObjects[0] && draggedObjects[0].type === 'pathGroup' && draggedObjects[0].refs.includes(path)) ||
+                        (draggedObjects[1] && draggedObjects[1].type === 'pathGroup' && draggedObjects[1].refs.includes(path));
+
+                    canvasCtx.lineCap = 'round';
+                    canvasCtx.lineJoin = 'round';
+
+                    const baseColor = isPathDragged ? '#ffffff' : path.color;
+                    const pSize = path.size || 6;
+                    const baseWidth = (isPathDragged ? pSize * 2 : pSize) * pathScale * sceneScale;
+
+                    // Neon Glow (Outer)
+                    canvasCtx.strokeStyle = baseColor;
+                    canvasCtx.lineWidth = baseWidth * 1.8;
+                    canvasCtx.shadowColor = baseColor;
+                    canvasCtx.shadowBlur = 25 * pathScale;
+                    canvasCtx.stroke();
+
+                    // Bright Core (Inner)
+                    canvasCtx.strokeStyle = isPathDragged ? '#ffffff' : '#ffffff80'; // brighter core
+                    canvasCtx.lineWidth = baseWidth * 0.4;
+                    canvasCtx.shadowBlur = 5 * pathScale;
+                    canvasCtx.stroke();
+                } else {
+                    // Volumetric Particle Style
+                    const time = Date.now() * 0.003;
+                    canvasCtx.fillStyle = path.color;
+                    canvasCtx.shadowColor = path.color;
+                    canvasCtx.shadowBlur = 10;
+                    for (let i = 0; i < path.points.length; i += 2) {
+                        const pt = path.points[i];
+                        const proj = project3D(pt.x, pt.y, pt.z || 0);
+                        const radiusOffset = (path.size || 6) * 1.5;
+                        
+                        for(let part=0; part<3; part++) {
+                            const offsetTime = time + part * (Math.PI * 2 / 3) + i * 0.15;
+                            const px = proj.x + Math.cos(offsetTime) * radiusOffset * proj.scale;
+                            const py = proj.y + Math.sin(offsetTime) * radiusOffset * proj.scale;
+                            
+                            canvasCtx.beginPath();
+                            const particleSize = Math.max(0.2, (Math.sin(offsetTime + i) * 1.5 + 2)) * proj.scale;
+                            canvasCtx.arc(px, py, particleSize, 0, Math.PI * 2);
+                            canvasCtx.fill();
+                        }
+                    }
+                }
+                canvasCtx.shadowBlur = 0;
+            }
+            
+            // Render Elastic Nets
+            for (const net of elasticNets) {
+                // Physics solve
+                for(let iter=0; iter<3; iter++) {
+                    for(const spring of net.springs) {
+                        const n1 = net.nodes[spring.n1];
+                        const n2 = net.nodes[spring.n2];
+                        let dx = n2.x - n1.x;
+                        let dy = n2.y - n1.y;
+                        let dz = n2.z - n1.z;
+                        let dist = Math.hypot(dx, dy, dz);
+                        if (dist === 0) dist = 0.001;
+                        let diff = (dist - spring.rest) / dist;
+                        let forceX = dx * diff * 0.5;
+                        let forceY = dy * diff * 0.5;
+                        let forceZ = dz * diff * 0.5;
+                        if (!n1.locked) { n1.x -= forceX; n1.y -= forceY; n1.z -= forceZ; }
+                        if (!n2.locked) { n2.x += forceX; n2.y += forceY; n2.z += forceZ; }
+                    }
+                }
+                
+                // Motion and drag
+                const isNetDragged = (draggedObjects[0] && draggedObjects[0].type === 'netNode' && net.nodes.includes(draggedObjects[0].node)) ||
+                                     (draggedObjects[1] && draggedObjects[1].type === 'netNode' && net.nodes.includes(draggedObjects[1].node));
+
+                for(const node of net.nodes) {
+                    if (!node.locked && !(draggedObjects[0] && draggedObjects[0].node === node) && !(draggedObjects[1] && draggedObjects[1].node === node)) {
+                        node.vy += 0.5; // Gravity
+                        node.x += node.vx; node.y += node.vy; node.z += node.vz;
+                        node.vx *= 0.8; node.vy *= 0.8; node.vz *= 0.8;
+                    }
                 }
 
-                const pathScale = p0.scale; // use start point scale for thickness
-
-                // Highlight if grabbed by either hand
-                const isPathDragged = (draggedObjects[0] && draggedObjects[0].type === 'pathGroup' && draggedObjects[0].refs.includes(path)) ||
-                    (draggedObjects[1] && draggedObjects[1].type === 'pathGroup' && draggedObjects[1].refs.includes(path));
-
-                canvasCtx.lineCap = 'round';
-                canvasCtx.lineJoin = 'round';
-
-                const baseColor = isPathDragged ? '#ffffff' : path.color;
-                const pSize = path.size || 6;
-                const baseWidth = (isPathDragged ? pSize * 2 : pSize) * pathScale * sceneScale;
-
-                // Neon Glow (Outer)
-                canvasCtx.strokeStyle = baseColor;
-                canvasCtx.lineWidth = baseWidth * 1.8;
-                canvasCtx.shadowColor = baseColor;
-                canvasCtx.shadowBlur = 25 * pathScale;
+                // Render structure
+                canvasCtx.strokeStyle = isNetDragged ? '#ffffff' : net.color;
+                canvasCtx.shadowBlur = isNetDragged ? 20 : 5;
+                canvasCtx.shadowColor = canvasCtx.strokeStyle;
+                canvasCtx.lineWidth = (isNetDragged ? 4 : 2) * sceneScale;
+                canvasCtx.beginPath();
+                for(const spring of net.springs) {
+                    const p1 = project3D(net.nodes[spring.n1].x, net.nodes[spring.n1].y, net.nodes[spring.n1].z);
+                    const p2 = project3D(net.nodes[spring.n2].x, net.nodes[spring.n2].y, net.nodes[spring.n2].z);
+                    canvasCtx.moveTo(p1.x, p1.y);
+                    canvasCtx.lineTo(p2.x, p2.y);
+                }
                 canvasCtx.stroke();
-
-                // Bright Core (Inner)
-                canvasCtx.strokeStyle = isPathDragged ? '#ffffff' : '#ffffff80'; // brighter core
-                canvasCtx.lineWidth = baseWidth * 0.4;
-                canvasCtx.shadowBlur = 5 * pathScale;
-                canvasCtx.stroke();
-
                 canvasCtx.shadowBlur = 0;
             }
 
@@ -632,14 +759,19 @@
                     const palmXRaw = palmCenter.x * canvasElement.width;
                     const palmYRaw = palmCenter.y * canvasElement.height;
 
+                    // Z-Depth estimation from palm scale
+                    const handSize = Math.hypot(landmarks[0].x - landmarks[9].x, landmarks[0].y - landmarks[9].y);
+                    const pzRaw = zDepthMode ? -(handSize - 0.12) * 5000 : 0;
+
                     // Smooth coordinates
-                    const alpha = 0.25; // Lower alpha means smoother drawing but slightly more lag
-                    if (sPxs[index] === null) { sPxs[index] = pxRaw; sPys[index] = pyRaw; } else { sPxs[index] += (pxRaw - sPxs[index]) * alpha; sPys[index] += (pyRaw - sPys[index]) * alpha; }
+                    const alpha = 0.40; // Sweet spot: responsive but smooths out AI hand jitter
+                    if (sPxs[index] === null) { sPxs[index] = pxRaw; sPys[index] = pyRaw; sPzs[index] = pzRaw; } else { sPxs[index] += (pxRaw - sPxs[index]) * alpha; sPys[index] += (pyRaw - sPys[index]) * alpha; sPzs[index] += (pzRaw - sPzs[index]) * alpha; }
                     if (sPinchXs[index] === null) { sPinchXs[index] = pinchMidXRaw; sPinchYs[index] = pinchMidYRaw; } else { sPinchXs[index] += (pinchMidXRaw - sPinchXs[index]) * alpha; sPinchYs[index] += (pinchMidYRaw - sPinchYs[index]) * alpha; }
                     if (sPalmXs[index] === null) { sPalmXs[index] = palmXRaw; sPalmYs[index] = palmYRaw; } else { sPalmXs[index] += (palmXRaw - sPalmXs[index]) * alpha; sPalmYs[index] += (palmYRaw - sPalmYs[index]) * alpha; }
 
                     const px = sPxs[index];
                     const py = sPys[index];
+                    const pz = sPzs[index];
                     const pinchMidX = sPinchXs[index];
                     const pinchMidY = sPinchYs[index];
                     const palmX = sPalmXs[index];
@@ -663,7 +795,19 @@
                                 }
                             }
 
-                            if (closest) {
+                            // Check elastic nets
+                            for (const net of elasticNets) {
+                                for (const node of net.nodes) {
+                                    const proj = project3D(node.x, node.y, node.z);
+                                    const dist = Math.hypot(proj.x - pinchMidX, proj.y - pinchMidY);
+                                    if (dist < minDist) {
+                                        minDist = dist;
+                                        closest = { type: 'netNode', node: node };
+                                    }
+                                }
+                            }
+
+                            if (closest && closest.type === 'path') {
                                 let selectedPaths = [closest.ref];
                                 if (closest.ref.groupId) {
                                     selectedPaths = paths.filter(p => p.groupId === closest.ref.groupId);
@@ -671,17 +815,21 @@
                                 draggedObjects[index] = { type: 'pathGroup', refs: selectedPaths };
                                 lastPinchMidXs[index] = pinchMidX;
                                 lastPinchMidYs[index] = pinchMidY;
+                            } else if (closest && closest.type === 'netNode') {
+                                draggedObjects[index] = closest;
+                                lastPinchMidXs[index] = pinchMidX;
+                                lastPinchMidYs[index] = pinchMidY;
                             }
                         }
 
                         if (draggedObjects[index]) {
-                            const moveP1 = unproject3D(lastPinchMidXs[index], lastPinchMidYs[index]);
-                            const moveP2 = unproject3D(pinchMidX, pinchMidY);
-                            const realDx = moveP2.x - moveP1.x;
-                            const realDy = moveP2.y - moveP1.y;
-                            const realDz = moveP2.z - moveP1.z;
-
                             if (draggedObjects[index].type === 'pathGroup') {
+                                const moveP1 = unproject3D(lastPinchMidXs[index], lastPinchMidYs[index]);
+                                const moveP2 = unproject3D(pinchMidX, pinchMidY);
+                                const realDx = moveP2.x - moveP1.x;
+                                const realDy = moveP2.y - moveP1.y;
+                                const realDz = moveP2.z - moveP1.z;
+
                                 for (const ref of draggedObjects[index].refs) {
                                     for (const pt of ref.points) {
                                         pt.x += realDx;
@@ -689,6 +837,20 @@
                                         pt.z = (pt.z || 0) + realDz;
                                     }
                                 }
+                            } else if (draggedObjects[index].type === 'netNode') {
+                                const moveP1 = unproject3D(lastPinchMidXs[index], lastPinchMidYs[index], draggedObjects[index].node.z);
+                                const moveP2 = unproject3D(pinchMidX, pinchMidY, draggedObjects[index].node.z);
+                                const realDx = moveP2.x - moveP1.x;
+                                const realDy = moveP2.y - moveP1.y;
+                                const realDz = moveP2.z - moveP1.z;
+
+                                const node = draggedObjects[index].node;
+                                node.x += realDx;
+                                node.y += realDy;
+                                node.z += realDz;
+                                node.vx = realDx * 0.5;
+                                node.vy = realDy * 0.5;
+                                node.vz = realDz * 0.5;
                             }
 
                             lastPinchMidXs[index] = pinchMidX;
@@ -702,34 +864,45 @@
                     if (gesture === 'DRAW') {
                         if (lastGestures[index] !== 'DRAW') {
                             const groupId = Date.now() + Math.random();
-                            currentPaths[index] = { groupId: groupId, color: colors[colorIndex], size: currentBrushSize, points: [] };
+                            currentPaths[index] = { groupId: groupId, color: colors[colorIndex], size: currentBrushSize, style: brushStyle, points: [] };
                             paths.push(currentPaths[index]);
                             if (symmetryMode) {
                                 currentPaths[index].symPaths = [];
                                 for (let s = 1; s < 8; s++) {
-                                    let sp = { groupId: groupId, color: colors[colorIndex], size: currentBrushSize, points: [] };
+                                    let sp = { groupId: groupId, color: colors[colorIndex], size: currentBrushSize, style: brushStyle, points: [] };
                                     currentPaths[index].symPaths.push(sp);
                                     paths.push(sp);
                                 }
                             }
                         }
                         if (currentPaths[index]) {
-                            const p3d = unproject3D(px, py);
-                            currentPaths[index].points.push(p3d);
-                            if (currentPaths[index].symPaths) {
-                                const hw = canvasElement.width / 2;
-                                const hh = canvasElement.height / 2;
-                                const cx = p3d.x - hw;
-                                const cy = p3d.y - hh;
-                                const r = Math.hypot(cx, cy);
-                                const a0 = Math.atan2(cy, cx);
-                                for(let s=0; s<7; s++) {
-                                    const a = a0 + ((s + 1) * Math.PI / 4);
-                                    currentPaths[index].symPaths[s].points.push({
-                                        x: hw + Math.cos(a) * r,
-                                        y: hh + Math.sin(a) * r,
-                                        z: p3d.z
-                                    });
+                            const p3d = unproject3D(px, py, pz);
+                            
+                            // Prevent micro-jitter strokes when hand is still
+                            let addPoint = true;
+                            const pts = currentPaths[index].points;
+                            if (pts.length > 0) {
+                                const lastPt = pts[pts.length - 1];
+                                if (Math.hypot(p3d.x - lastPt.x, p3d.y - lastPt.y) < 2.5) addPoint = false;
+                            }
+
+                            if (addPoint) {
+                                currentPaths[index].points.push(p3d);
+                                if (currentPaths[index].symPaths) {
+                                    const hw = canvasElement.width / 2;
+                                    const hh = canvasElement.height / 2;
+                                    const cx = p3d.x - hw;
+                                    const cy = p3d.y - hh;
+                                    const r = Math.hypot(cx, cy);
+                                    const a0 = Math.atan2(cy, cx);
+                                    for(let s=0; s<7; s++) {
+                                        const a = a0 + ((s + 1) * Math.PI / 4);
+                                        currentPaths[index].symPaths[s].points.push({
+                                            x: hw + Math.cos(a) * r,
+                                            y: hh + Math.sin(a) * r,
+                                            z: p3d.z
+                                        });
+                                    }
                                 }
                             }
                         }
