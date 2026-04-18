@@ -194,6 +194,11 @@
         <p>👍 <strong>Thumbs Up:</strong> Shatter into Atoms</p>
         <p>👎 <strong>Thumbs Down:</strong> Assemble Atoms</p>
         <div id="currentColorDisplay"></div>
+        <button id="toggleSymmetryBtn" onclick="toggleSymmetry()" style="margin-top: 15px; width: 100%; background: transparent; color: white; border: 1px solid #00f0ff; padding: 10px; border-radius: 8px; cursor: pointer; font-family: 'Outfit'; transition: all 0.2s;">Symmetry: OFF</button>
+        <div style="margin-top: 15px;">
+            <label for="brushSizeSlider" style="display: block; font-size: 14px; font-weight: 300; margin-bottom: 5px;">Brush Size: <span id="brushSizeLabel">6</span></label>
+            <input type="range" id="brushSizeSlider" min="1" max="40" value="6" style="width: 100%; cursor: pointer;">
+        </div>
     </div>
 
     <script>
@@ -201,6 +206,12 @@
         const canvasElement = document.getElementById('outputCanvas');
         const canvasCtx = canvasElement.getContext('2d');
         const loadingScreen = document.getElementById('loading');
+
+        let currentBrushSize = 6;
+        document.getElementById('brushSizeSlider').addEventListener('input', (e) => {
+            currentBrushSize = parseInt(e.target.value);
+            document.getElementById('brushSizeLabel').innerText = currentBrushSize;
+        });
 
         // Setup resize
         function resizeCanvas() {
@@ -267,7 +278,7 @@
         const colors = ['#ff007f', '#00f0ff', '#00ff00', '#ffd700', '#ff5722', '#ffffff'];
         let colorIndex = 0;
         let colorChangeCooldown = 0;
-        
+
         // Particle System State
         let shatterState = 'INTACT'; // 'INTACT' | 'SHATTERED' | 'ASSEMBLING'
         let particles = [];
@@ -282,6 +293,7 @@
             const size = 120; // Default geometry scale
             const hw = canvasElement.width / 2;
             const hh = canvasElement.height / 2;
+            const groupId = Date.now() + Math.random();
 
             if (type === 'cube') {
                 const s = size;
@@ -293,6 +305,7 @@
                     [s, -s, s], [s, -s, -s]
                 ];
                 paths.push({
+                    groupId: groupId,
                     color: color,
                     points: pts.map(p => ({ x: hw + cx + p[0], y: hh + cy + p[1], z: cz + p[2] }))
                 });
@@ -306,6 +319,7 @@
                     [-s, s, s]
                 ];
                 paths.push({
+                    groupId: groupId,
                     color: color,
                     points: pts.map(p => ({ x: hw + cx + p[0], y: hh + cy + p[1], z: cz + p[2] }))
                 });
@@ -316,19 +330,19 @@
                     const a = (i / steps) * Math.PI * 2;
                     p1.push({ x: hw + cx + Math.cos(a) * size, y: hh + cy + Math.sin(a) * size, z: cz });
                 }
-                paths.push({ color: color, points: p1 });
+                paths.push({ groupId: groupId, color: color, points: p1 });
                 let p2 = [];
                 for (let i = 0; i <= steps; i++) {
                     const a = (i / steps) * Math.PI * 2;
                     p2.push({ x: hw + cx + Math.cos(a) * size, y: hh + cy, z: cz + Math.sin(a) * size });
                 }
-                paths.push({ color: color, points: p2 });
+                paths.push({ groupId: groupId, color: color, points: p2 });
                 let p3 = [];
                 for (let i = 0; i <= steps; i++) {
                     const a = (i / steps) * Math.PI * 2;
                     p3.push({ x: hw + cx, y: hh + cy + Math.cos(a) * size, z: cz + Math.sin(a) * size });
                 }
-                paths.push({ color: color, points: p3 });
+                paths.push({ groupId: groupId, color: color, points: p3 });
             } else if (type === 'planet') {
                 const steps = 30;
                 let p1 = [];
@@ -336,13 +350,13 @@
                     const a = (i / steps) * Math.PI * 2;
                     p1.push({ x: hw + cx + Math.cos(a) * size, y: hh + cy + Math.sin(a) * size, z: cz });
                 }
-                paths.push({ color: color, points: p1 });
+                paths.push({ groupId: groupId, color: color, points: p1 });
                 let p2 = [];
                 for (let i = 0; i <= steps; i++) {
                     const a = (i / steps) * Math.PI * 2;
                     p2.push({ x: hw + cx + Math.cos(a) * size, y: hh + cy, z: cz + Math.sin(a) * size });
                 }
-                paths.push({ color: color, points: p2 });
+                paths.push({ groupId: groupId, color: color, points: p2 });
 
                 // Saturn Rings
                 let ring1 = [];
@@ -352,8 +366,8 @@
                     ring1.push({ x: hw + cx + Math.cos(a) * size * 1.6, y: hh + cy + Math.sin(a) * size * 1.6, z: cz });
                     ring2.push({ x: hw + cx + Math.cos(a) * size * 1.9, y: hh + cy + Math.sin(a) * size * 1.9, z: cz });
                 }
-                paths.push({ color: '#ffd700', points: ring1 });
-                paths.push({ color: '#ff5722', points: ring2 });
+                paths.push({ groupId: groupId, color: '#ffd700', points: ring1 });
+                paths.push({ groupId: groupId, color: '#ff5722', points: ring2 });
 
             } else if (type === 'star') {
                 const s = size * 1.5;
@@ -363,7 +377,7 @@
                     const a = (i / 10) * Math.PI * 2 - Math.PI / 2;
                     pts.push({ x: hw + cx + Math.cos(a) * r, y: hh + cy + Math.sin(a) * r, z: cz });
                 }
-                paths.push({ color: '#ffd700', points: pts }); // Gold!
+                paths.push({ groupId: groupId, color: '#ffd700', points: pts }); // Gold!
 
             } else if (type === 'galaxy') {
                 const arms = 3;
@@ -378,9 +392,18 @@
                         const randZ = (Math.random() - 0.5) * size * 0.4;
                         pts.push({ x: hw + cx + Math.cos(a) * r, y: hh + cy + Math.sin(a) * r, z: cz + randZ });
                     }
-                    paths.push({ color: Math.random() > 0.5 ? '#00f0ff' : '#ff007f', points: pts });
+                    paths.push({ groupId: groupId, color: Math.random() > 0.5 ? '#00f0ff' : '#ff007f', points: pts });
                 }
             }
+        }
+
+        // Symmetry state
+        let symmetryMode = false;
+        function toggleSymmetry() {
+            symmetryMode = !symmetryMode;
+            const btn = document.getElementById('toggleSymmetryBtn');
+            btn.innerText = `Symmetry: ${symmetryMode ? 'ON' : 'OFF'}`;
+            btn.style.background = symmetryMode ? 'rgba(0, 240, 255, 0.2)' : 'transparent';
         }
 
         // Undo state
@@ -452,16 +475,27 @@
                 const pathScale = p0.scale; // use start point scale for thickness
 
                 // Highlight if grabbed by either hand
-                const isPathDragged = (draggedObjects[0] && draggedObjects[0].type === 'path' && draggedObjects[0].ref === path) ||
-                    (draggedObjects[1] && draggedObjects[1].type === 'path' && draggedObjects[1].ref === path);
+                const isPathDragged = (draggedObjects[0] && draggedObjects[0].type === 'pathGroup' && draggedObjects[0].refs.includes(path)) ||
+                    (draggedObjects[1] && draggedObjects[1].type === 'pathGroup' && draggedObjects[1].refs.includes(path));
 
-                canvasCtx.strokeStyle = isPathDragged ? '#ffffff' : path.color; // Highlight grabbed stroke
-                canvasCtx.lineWidth = (isPathDragged ? 12 : 6) * pathScale * sceneScale;
                 canvasCtx.lineCap = 'round';
                 canvasCtx.lineJoin = 'round';
 
-                canvasCtx.shadowColor = isPathDragged ? '#ffffff' : path.color;
-                canvasCtx.shadowBlur = (isPathDragged ? 25 : 8) * pathScale;
+                const baseColor = isPathDragged ? '#ffffff' : path.color;
+                const pSize = path.size || 6;
+                const baseWidth = (isPathDragged ? pSize * 2 : pSize) * pathScale * sceneScale;
+
+                // Neon Glow (Outer)
+                canvasCtx.strokeStyle = baseColor;
+                canvasCtx.lineWidth = baseWidth * 1.8;
+                canvasCtx.shadowColor = baseColor;
+                canvasCtx.shadowBlur = 25 * pathScale;
+                canvasCtx.stroke();
+
+                // Bright Core (Inner)
+                canvasCtx.strokeStyle = isPathDragged ? '#ffffff' : '#ffffff80'; // brighter core
+                canvasCtx.lineWidth = baseWidth * 0.4;
+                canvasCtx.shadowBlur = 5 * pathScale;
                 canvasCtx.stroke();
 
                 canvasCtx.shadowBlur = 0;
@@ -489,13 +523,13 @@
                         p.vz += dz * 0.05;
                         p.vx *= 0.85; p.vy *= 0.85; p.vz *= 0.85; // Dampening
                         p.x += p.vx; p.y += p.vy; p.z += p.vz;
-                        
+
                         // Check if practically assembled
                         if (Math.abs(dx) > 3 || Math.abs(dy) > 3 || Math.abs(dz) > 3) {
                             allAssembled = false;
                         }
                     }
-                    
+
                     // Render atom
                     const proj = project3D(p.x, p.y, p.z);
                     canvasCtx.fillStyle = p.color;
@@ -503,7 +537,7 @@
                     canvasCtx.arc(proj.x, proj.y, Math.max(0.5, p.scale * proj.scale * sceneScale), 0, Math.PI * 2);
                     canvasCtx.fill();
                 });
-                
+
                 // If assembling and all converged
                 if (shatterState === 'ASSEMBLING' && allAssembled) {
                     shatterState = 'INTACT';
@@ -559,20 +593,22 @@
                         gesture = 'UNDO';
                     } else if (thumbExtended && !indexExtended && !middleExtended && !ringExtended && pinkyExtended) {
                         gesture = 'PALM'; // Mapped 'Call Me' gesture to eraser
-                    } else if (thumbExtended && !indexExtended && !middleExtended && !ringExtended && !pinkyExtended) {
-                        if (landmarks[4].y < landmarks[0].y) {
+                    } else if (!indexExtended && !middleExtended && !ringExtended && !pinkyExtended) {
+                        // 4 fingers are closed. Distinguish Thumbs up, Thumbs down, and Fist.
+                        const thumbDy = landmarks[4].y - landmarks[0].y;
+                        if (thumbExtended && thumbDy < -0.08) {
                             gesture = 'SHATTER'; // Thumbs up
-                        } else {
+                        } else if (thumbExtended && thumbDy > 0.08) {
                             gesture = 'ASSEMBLE'; // Thumbs down
+                        } else {
+                            gesture = 'FIST'; // Thumbs tucked or sideways
                         }
-                    } else if (!thumbExtended && !indexExtended && !middleExtended && !ringExtended && !pinkyExtended) {
-                        gesture = 'FIST'; // All closed
                     }
 
                     // Smooth gestures (Debounce) to prevent flickering
                     gestureHistory[index].push(gesture);
                     if (gestureHistory[index].length > 5) gestureHistory[index].shift();
-                    
+
                     const gestureCounts = {};
                     let maxGesture = gesture;
                     let maxCount = 0;
@@ -628,7 +664,11 @@
                             }
 
                             if (closest) {
-                                draggedObjects[index] = closest;
+                                let selectedPaths = [closest.ref];
+                                if (closest.ref.groupId) {
+                                    selectedPaths = paths.filter(p => p.groupId === closest.ref.groupId);
+                                }
+                                draggedObjects[index] = { type: 'pathGroup', refs: selectedPaths };
                                 lastPinchMidXs[index] = pinchMidX;
                                 lastPinchMidYs[index] = pinchMidY;
                             }
@@ -641,11 +681,13 @@
                             const realDy = moveP2.y - moveP1.y;
                             const realDz = moveP2.z - moveP1.z;
 
-                            if (draggedObjects[index].type === 'path') {
-                                for (const pt of draggedObjects[index].ref.points) {
-                                    pt.x += realDx;
-                                    pt.y += realDy;
-                                    pt.z = (pt.z || 0) + realDz;
+                            if (draggedObjects[index].type === 'pathGroup') {
+                                for (const ref of draggedObjects[index].refs) {
+                                    for (const pt of ref.points) {
+                                        pt.x += realDx;
+                                        pt.y += realDy;
+                                        pt.z = (pt.z || 0) + realDz;
+                                    }
                                 }
                             }
 
@@ -659,12 +701,37 @@
                     // Handle draw gesture
                     if (gesture === 'DRAW') {
                         if (lastGestures[index] !== 'DRAW') {
-                            currentPaths[index] = { color: colors[colorIndex], points: [] };
+                            const groupId = Date.now() + Math.random();
+                            currentPaths[index] = { groupId: groupId, color: colors[colorIndex], size: currentBrushSize, points: [] };
                             paths.push(currentPaths[index]);
+                            if (symmetryMode) {
+                                currentPaths[index].symPaths = [];
+                                for (let s = 1; s < 8; s++) {
+                                    let sp = { groupId: groupId, color: colors[colorIndex], size: currentBrushSize, points: [] };
+                                    currentPaths[index].symPaths.push(sp);
+                                    paths.push(sp);
+                                }
+                            }
                         }
                         if (currentPaths[index]) {
                             const p3d = unproject3D(px, py);
                             currentPaths[index].points.push(p3d);
+                            if (currentPaths[index].symPaths) {
+                                const hw = canvasElement.width / 2;
+                                const hh = canvasElement.height / 2;
+                                const cx = p3d.x - hw;
+                                const cy = p3d.y - hh;
+                                const r = Math.hypot(cx, cy);
+                                const a0 = Math.atan2(cy, cx);
+                                for(let s=0; s<7; s++) {
+                                    const a = a0 + ((s + 1) * Math.PI / 4);
+                                    currentPaths[index].symPaths[s].points.push({
+                                        x: hw + Math.cos(a) * r,
+                                        y: hh + Math.sin(a) * r,
+                                        z: p3d.z
+                                    });
+                                }
+                            }
                         }
                     } else {
                         currentPaths[index] = null;
@@ -685,17 +752,27 @@
                         const eraseRadius = 80;
 
                         // Erase paths
+                        const erasedGroupIds = new Set();
+                        
                         for (let i = paths.length - 1; i >= 0; i--) {
                             const path = paths[i];
                             let erased = false;
-                            for (const pt of path.points) {
-                                const proj = project3D(pt.x, pt.y, pt.z || 0);
-                                const dist = Math.hypot(proj.x - palmX, proj.y - palmY);
-                                if (dist < eraseRadius) {
-                                    erased = true;
-                                    break;
+                            
+                            // If this path's group was already erased this frame, just remove it too
+                            if (path.groupId && erasedGroupIds.has(path.groupId)) {
+                                erased = true;
+                            } else {
+                                for (const pt of path.points) {
+                                    const proj = project3D(pt.x, pt.y, pt.z || 0);
+                                    const dist = Math.hypot(proj.x - palmX, proj.y - palmY);
+                                    if (dist < eraseRadius) {
+                                        erased = true;
+                                        if (path.groupId) erasedGroupIds.add(path.groupId);
+                                        break;
+                                    }
                                 }
                             }
+                            
                             if (erased) {
                                 const erasedPath = paths.splice(i, 1)[0];
                                 currentEraseSession.push(erasedPath);
@@ -714,7 +791,7 @@
                                 // Interpolate atoms along lines
                                 for (let i = 0; i < path.points.length - 1; i++) {
                                     let p1 = path.points[i];
-                                    let p2 = path.points[i+1];
+                                    let p2 = path.points[i + 1];
                                     let dist = Math.hypot(p2.x - p1.x, p2.y - p1.y);
                                     let steps = Math.max(1, Math.floor(dist / 4)); // Density
                                     for (let j = 0; j <= steps; j++) {
@@ -783,12 +860,16 @@
                         canvasCtx.fillStyle = '#00f0ff';
                         canvasCtx.fill();
                     } else {
-                        canvasCtx.arc(pointerX, pointerY, 15, 0, 2 * Math.PI);
+                        const isDrawing = gesture === 'DRAW';
+                        const cursorOuter = isDrawing ? Math.max(15, currentBrushSize * 2) : 15;
+                        const cursorInner = isDrawing ? Math.max(8, currentBrushSize) : 8;
+
+                        canvasCtx.arc(pointerX, pointerY, cursorOuter, 0, 2 * Math.PI);
                         canvasCtx.fillStyle = (gesture === 'DRAW' || gesture === 'PINCH' || gesture === 'ZOOM') ? colors[colorIndex] + '80' : 'rgba(255, 255, 255, 0.3)';
                         canvasCtx.fill();
 
                         canvasCtx.beginPath();
-                        canvasCtx.arc(pointerX, pointerY, 8, 0, 2 * Math.PI);
+                        canvasCtx.arc(pointerX, pointerY, cursorInner, 0, 2 * Math.PI);
                         canvasCtx.fillStyle = (gesture === 'DRAW' || gesture === 'PINCH' || gesture === 'ZOOM') ? colors[colorIndex] : 'white';
                         canvasCtx.fill();
                     }
